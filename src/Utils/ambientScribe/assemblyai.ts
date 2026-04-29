@@ -19,11 +19,26 @@ const STREAMING_BASE = import.meta.env.DEV
   : "https://streaming.assemblyai.com";
 
 /**
- * Speech model to use for the streaming session. Required by v3.
- * See https://www.assemblyai.com/docs/api-reference/streaming-api/streaming-api
+ * Speech model for streaming. Required by v3.
+ * `u3-rt-pro` = Universal-3 Pro Streaming (highest accuracy).
+ * See https://www.assemblyai.com/docs/streaming/universal-3-pro
  */
-export const STREAMING_SPEECH_MODEL = "universal-streaming-english";
+export const STREAMING_SPEECH_MODEL = "u3-rt-pro";
 export const STREAMING_SAMPLE_RATE = 16000;
+
+/**
+ * Streaming "Medical Mode" — boosts accuracy on medication names, dosages,
+ * procedures and diagnoses. Enabled by setting the `domain` connection param.
+ * See https://www.assemblyai.com/docs/streaming/medical-mode
+ */
+export const STREAMING_DOMAIN = "medical-v1";
+
+/**
+ * Turn-detection silence thresholds (ms) recommended for medical audio so
+ * mid-sentence pauses don't fragment the transcript prematurely.
+ */
+export const STREAMING_MIN_TURN_SILENCE_MS = 800;
+export const STREAMING_MAX_TURN_SILENCE_MS = 3600;
 
 /** Public host (not proxied) for opening the WebSocket. */
 export const STREAMING_WS_HOST = "streaming.assemblyai.com";
@@ -114,7 +129,14 @@ export interface BatchTranscript {
 }
 
 /**
- * Submit a batch transcription job with speaker diarization enabled.
+ * Submit a batch transcription job with speaker diarization + Medical Mode.
+ *
+ * - `universal-3-pro` is the recommended high-accuracy model; `universal-2`
+ *   is included as a fallback for languages Universal-3 Pro doesn't yet
+ *   support.
+ * - `domain: "medical-v1"` enables Medical Mode for clinical-grade accuracy
+ *   on drug names, dosages and diagnoses.
+ *   See https://www.assemblyai.com/docs/medical-scribe-best-practices
  */
 export async function requestBatchTranscript(
   apiKey: string,
@@ -122,7 +144,8 @@ export async function requestBatchTranscript(
 ): Promise<string> {
   const data = await post<BatchTranscript>("/v2/transcript", apiKey, {
     audio_url: audioUrl,
-    speech_models: ["universal-2"],
+    speech_models: ["universal-3-pro", "universal-2"],
+    domain: "medical-v1",
     speaker_labels: true,
   });
   return data.id;

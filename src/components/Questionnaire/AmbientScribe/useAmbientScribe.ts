@@ -39,7 +39,8 @@ export interface UseAmbientScribeArgs {
 export interface UseAmbientScribeReturn {
   phase: ScribePhase;
   partialText: string;
-  finalSegments: { text: string; turn: number }[];
+  partialSpeaker: string | null;
+  finalSegments: { text: string; turn: number; speaker: string | null }[];
   combinedText: string;
   /** Set after batch transcription completes. */
   batchTranscript: BatchTranscript | null;
@@ -213,6 +214,7 @@ export function useAmbientScribe({
   return {
     phase,
     partialText: streaming.partialText,
+    partialSpeaker: streaming.partialSpeaker,
     finalSegments: streaming.finalSegments,
     combinedText: streaming.combinedText,
     batchTranscript,

@@ -151,18 +151,56 @@ export function AmbientScribePanel({
         {/* Transcript */}
         <div className="flex-1 overflow-y-auto px-4 pb-4 border-t">
           {transcriptText ? (
-            <p className="pt-3 text-sm text-gray-800 whitespace-pre-wrap">
-              {transcriptText}
-            </p>
+            scribe.batchTranscript?.utterances?.length ? (
+              <div className="pt-3 space-y-2 text-sm">
+                {scribe.batchTranscript.utterances.map((u, i) => {
+                  const prev =
+                    i > 0
+                      ? scribe.batchTranscript!.utterances![i - 1].speaker
+                      : null;
+                  const showSpeaker = u.speaker !== prev;
+                  return (
+                    <div key={i} className="flex items-start gap-2">
+                      <SpeakerBadge speaker={u.speaker} visible={showSpeaker} />
+                      <p className="flex-1 text-gray-800">{u.text}</p>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="pt-3 text-sm text-gray-800 whitespace-pre-wrap">
+                {transcriptText}
+              </p>
+            )
           ) : hasLiveLines ? (
             <div className="pt-3 space-y-2 text-sm">
-              {scribe.finalSegments.map((s, i) => (
-                <p key={i} className="text-gray-800">
-                  {s.text}
-                </p>
-              ))}
+              {scribe.finalSegments.map((s, i) => {
+                const prevSpeaker =
+                  i > 0 ? scribe.finalSegments[i - 1].speaker : null;
+                const showSpeaker =
+                  s.speaker !== null && s.speaker !== prevSpeaker;
+                return (
+                  <div key={i} className="flex items-start gap-2">
+                    <SpeakerBadge speaker={s.speaker} visible={showSpeaker} />
+                    <p className="flex-1 text-gray-800">{s.text}</p>
+                  </div>
+                );
+              })}
               {scribe.partialText && (
-                <p className="text-gray-500 italic">{scribe.partialText}</p>
+                <div className="flex items-start gap-2">
+                  <SpeakerBadge
+                    speaker={scribe.partialSpeaker}
+                    visible={
+                      scribe.partialSpeaker !== null &&
+                      scribe.partialSpeaker !==
+                        (scribe.finalSegments[scribe.finalSegments.length - 1]
+                          ?.speaker ?? null)
+                    }
+                  />
+                  <p className="flex-1 text-gray-500 italic">
+                    {scribe.partialText}
+                  </p>
+                </div>
               )}
             </div>
           ) : (
@@ -262,6 +300,52 @@ function RecordingTimer({ ms }: { ms: number }) {
   return (
     <span className="mt-2 font-mono text-xs text-gray-400">
       {m}:{s}
+    </span>
+  );
+}
+
+// Tailwind palette per speaker label. Diarization typically yields A/B/C…;
+// fallback to a neutral chip for "UNKNOWN" or when diarization is disabled.
+const SPEAKER_STYLES: Record<string, string> = {
+  A: "bg-blue-100 text-blue-700 ring-blue-200",
+  B: "bg-emerald-100 text-emerald-700 ring-emerald-200",
+  C: "bg-violet-100 text-violet-700 ring-violet-200",
+  D: "bg-amber-100 text-amber-700 ring-amber-200",
+  E: "bg-rose-100 text-rose-700 ring-rose-200",
+  F: "bg-cyan-100 text-cyan-700 ring-cyan-200",
+};
+
+function SpeakerBadge({
+  speaker,
+  visible,
+}: {
+  speaker: string | null;
+  visible: boolean;
+}) {
+  const { t } = useTranslation();
+  // Reserve a fixed width slot so transcript lines stay aligned even when
+  // the badge is hidden (continuation of the same speaker).
+  if (!visible || !speaker) {
+    return <span aria-hidden className="w-12 shrink-0" />;
+  }
+  const isUnknown = speaker === "UNKNOWN";
+  const style =
+    SPEAKER_STYLES[speaker] ?? "bg-gray-100 text-gray-600 ring-gray-200";
+  return (
+    <span
+      className={cn(
+        "shrink-0 inline-flex items-center justify-center w-12 px-1.5 py-0.5 rounded-md text-[10px] font-semibold uppercase tracking-wider ring-1",
+        isUnknown ? "bg-gray-100 text-gray-500 ring-gray-200" : style,
+      )}
+      title={
+        isUnknown
+          ? t("ambient_scribe_speaker_unknown_tooltip")
+          : t("ambient_scribe_speaker_tooltip", { speaker })
+      }
+    >
+      {isUnknown
+        ? t("ambient_scribe_speaker_unknown_short")
+        : t("ambient_scribe_speaker_short", { speaker })}
     </span>
   );
 }

@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
+  STREAMING_DOMAIN,
+  STREAMING_MAX_TURN_SILENCE_MS,
+  STREAMING_MIN_TURN_SILENCE_MS,
   STREAMING_SAMPLE_RATE,
   STREAMING_SPEECH_MODEL,
   STREAMING_WS_HOST,
@@ -11,10 +14,17 @@ export interface FinalSegment {
   text: string;
   /** AssemblyAI v3 turn order, used to dedupe formatted/unformatted finals. */
   turn: number;
+  /**
+   * Per-turn speaker label from streaming diarization (e.g. "A", "B").
+   * `"UNKNOWN"` for very short turns, `null` if diarization is disabled.
+   */
+  speaker: string | null;
 }
 
 interface UseAssemblyAIStreamingReturn {
   partialText: string;
+  /** Speaker label for the in-progress partial (e.g. "A", "B", "UNKNOWN"). */
+  partialSpeaker: string | null;
   finalSegments: FinalSegment[];
   /** Concatenation of finals + the running partial (for display & LLM input). */
   combinedText: string;
@@ -36,6 +46,7 @@ interface IncomingMessage {
   end_of_turn?: boolean;
   turn_is_formatted?: boolean;
   turn_order?: number;
+  speaker_label?: string;
   // Errors / unknown
   error?: string;
 }
@@ -43,14 +54,19 @@ interface IncomingMessage {
 /**
  * Manages a streaming connection to AssemblyAI's realtime endpoint.
  *
- * Note: the streaming product does not provide speaker diarization. Call
- * the batch transcription endpoint (with `speaker_labels: true`) on the
- * full recording for diarized output.
+/**
+ * Manages a streaming connection to AssemblyAI's realtime endpoint.
+ *
+ * Real-time speaker diarization is enabled via `speaker_labels=true`. Each
+ * `Turn` event includes a `speaker_label` ("A", "B", … or `"UNKNOWN"` for
+ * very short turns). Speaker accuracy improves over the course of a session
+ * as the model accumulates embedding context.
  */
 export function useAssemblyAIStreaming(
   apiKey: string | undefined,
 ): UseAssemblyAIStreamingReturn {
   const [partialText, setPartialText] = useState("");
+  const [partialSpeaker, setPartialSpeaker] = useState<string | null>(null);
   const [finalSegments, setFinalSegments] = useState<FinalSegment[]>([]);
   const [isConnected, setIsConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -70,6 +86,7 @@ export function useAssemblyAIStreaming(
 
   const reset = useCallback(() => {
     setPartialText("");
+    setPartialSpeaker(null);
     setFinalSegments([]);
     setError(null);
   }, []);
@@ -107,6 +124,10 @@ export function useAssemblyAIStreaming(
         speech_model: STREAMING_SPEECH_MODEL,
         sample_rate: String(STREAMING_SAMPLE_RATE),
         format_turns: "true",
+        domain: STREAMING_DOMAIN,
+        speaker_labels: "true",
+        min_turn_silence: String(STREAMING_MIN_TURN_SILENCE_MS),
+        max_turn_silence: String(STREAMING_MAX_TURN_SILENCE_MS),
         token,
       });
       const url = `wss://${STREAMING_WS_HOST}/v3/ws?${params.toString()}`;
@@ -144,20 +165,26 @@ export function useAssemblyAIStreaming(
           const transcript = (msg.transcript ?? "").trim();
           if (!msg.end_of_turn) {
             setPartialText(transcript);
+            setPartialSpeaker(msg.speaker_label ?? null);
             return;
           }
           // end_of_turn = true -> finalize. With format_turns=true a
           // formatted version may follow with the same turn_order; replace
           // the previous final entry rather than appending a duplicate.
           setPartialText("");
+          setPartialSpeaker(null);
           if (!transcript) return;
           const turn = msg.turn_order ?? -1;
+          const speaker = msg.speaker_label ?? null;
           setFinalSegments((prev) => {
             const last = prev[prev.length - 1];
             if (last && last.turn === turn) {
-              return [...prev.slice(0, -1), { text: transcript, turn }];
+              return [
+                ...prev.slice(0, -1),
+                { text: transcript, turn, speaker },
+              ];
             }
-            return [...prev, { text: transcript, turn }];
+            return [...prev, { text: transcript, turn, speaker }];
           });
         };
       });
@@ -187,6 +214,7 @@ export function useAssemblyAIStreaming(
 
   return {
     partialText,
+    partialSpeaker,
     finalSegments,
     combinedText: combinedText.trim(),
     isConnected,
