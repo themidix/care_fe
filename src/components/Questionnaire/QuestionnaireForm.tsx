@@ -1,9 +1,11 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { navigate, useNavigationPrompt, useQueryParams } from "raviger";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
+
+import careConfig from "@careConfig";
 
 import { cn } from "@/lib/utils";
 
@@ -35,7 +37,6 @@ import type {
 import formSubmissionApi from "@/types/questionnaire/formSubmissionApi";
 import {
   type Question,
-  AnswerOption,
   findQuestionById,
 } from "@/types/questionnaire/question";
 import { QuestionnaireRead } from "@/types/questionnaire/questionnaire";
@@ -43,6 +44,8 @@ import questionnaireApi from "@/types/questionnaire/questionnaireApi";
 import { CreateAppointmentQuestion } from "@/types/scheduling/schedule";
 
 import BackButton from "@/components/Common/BackButton";
+import { AmbientScribePanel } from "@/components/Questionnaire/AmbientScribe/AmbientScribePanel";
+import { coerceValueByType } from "@/components/Questionnaire/AmbientScribe/extraction";
 import { validateEncounterQuestion } from "@/components/Questionnaire/QuestionTypes/EncounterQuestion";
 import { EncounterEdit } from "@/types/emr/encounter/encounter";
 import { ArrowLeft } from "lucide-react";
@@ -54,6 +57,7 @@ import { validateMedicationStatementQuestion } from "./QuestionTypes/MedicationS
 import { isQuestionEnabled } from "./QuestionTypes/QuestionGroup";
 import { QuestionnaireSearch } from "./QuestionnaireSearch";
 import { FIXED_QUESTIONNAIRES } from "./data/StructuredFormData";
+import { initializeResponses } from "./responses";
 import { getStructuredRequests } from "./structured/handlers";
 
 import queryClient from "@/Utils/request/queryClient";
@@ -329,41 +333,6 @@ const STRUCTURED_TYPE_VALIDATORS = {
   },
 } as const;
 
-const initializeResponses = (
-  questions: Question[],
-): QuestionnaireResponse[] => {
-  const responses: QuestionnaireResponse[] = [];
-
-  const processQuestion = (q: Question) => {
-    if (q.type === "group" && q.questions) {
-      q.questions.forEach(processQuestion);
-    } else {
-      let defaultValues: ResponseValue[] = [];
-      if (q.answer_option && q.answer_option.length > 0) {
-        const defaultOptions: AnswerOption[] = q.answer_option.filter(
-          (o) => o.initial_selected === true,
-        );
-        if (defaultOptions.length > 0) {
-          defaultValues = defaultOptions.map((opt) => ({
-            type: "string",
-            value: opt.value,
-            coding: opt.code ?? undefined,
-          }));
-        }
-      }
-      responses.push({
-        question_id: q.id,
-        link_id: q.link_id,
-        values: defaultValues,
-        structured_type: q.structured_type ?? null,
-      });
-    }
-  };
-
-  questions.forEach(processQuestion);
-  return responses;
-};
-
 export function QuestionnaireForm({
   questionnaireSlug,
   patientId,
@@ -385,6 +354,45 @@ export function QuestionnaireForm({
   const [activeGroupId, setActiveGroupId] = useState<string>();
   const [isInitialized, setIsInitialized] = useState(false);
   const [draftMismatchError, setDraftMismatchError] = useState(false);
+
+  // Tracks question ids the user has manually edited. Used to ensure the
+  // Ambient Scribe never overwrites a value the user has already touched.
+  const touchedQuestionsRef = useRef<Set<string>>(new Set());
+
+  // Apply LeMUR extractions: skip questions the user has already touched, and
+  // skip values that fail coercion. Updates affect every form's responses.
+  const handleScribeExtraction = useCallback(
+    ({ values }: { values: Record<string, unknown> }) => {
+      const touched = touchedQuestionsRef.current;
+      setQuestionnaireForms((prevForms) =>
+        prevForms.map((formItem) => {
+          const updatedResponses = formItem.responses.map((response) => {
+            if (touched.has(response.question_id)) return response;
+            if (!(response.question_id in values)) return response;
+            const q = findQuestionById(
+              formItem.questionnaire.questions,
+              response.question_id,
+            );
+            if (!q) return response;
+            const coerced = coerceValueByType(
+              values[response.question_id],
+              q.type,
+            );
+            if (!coerced) return response;
+            return { ...response, values: coerced };
+          });
+          return { ...formItem, responses: updatedResponses };
+        }),
+      );
+    },
+    [],
+  );
+
+  // Aggregate all questions for the panel's LeMUR question list.
+  const allQuestions = useMemo(
+    () => questionnaireForms.flatMap((f) => f.questionnaire.questions),
+    [questionnaireForms],
+  );
 
   const {
     data: questionnaireData,
@@ -613,7 +621,6 @@ export function QuestionnaireForm({
           setIsInitialized(true);
         }
       } else if (questionnaire) {
-        // No draft, initialize with empty responses
         setQuestionnaireForms([
           {
             questionnaire,
@@ -959,50 +966,80 @@ export function QuestionnaireForm({
     }
   };
 
+  const isFromDraft = !!continueDraftId;
+  const showScribePanel =
+    !!careConfig.ambientScribe.assemblyAIApiKey &&
+    !!encounterId &&
+    encounterId !== "preview" &&
+    !isFromDraft &&
+    allQuestions.length > 0;
+
+  const sectionNav = (
+    <>
+      {questionnaireForms.map((form) => (
+        <div key={form.questionnaire.id} className="space-y-2">
+          <button
+            className={cn(
+              "w-full text-left px-2 py-1 rounded hover:bg-gray-100 font-medium",
+              activeQuestionnaireId === form.questionnaire.id &&
+                "bg-gray-100 text-green-600",
+            )}
+            onClick={() => scrollToQuestion(form.questionnaire.id)}
+            disabled={isPending}
+          >
+            {form.questionnaire.title}
+          </button>
+          <div className="pl-4 space-y-1">
+            {form.questionnaire.questions
+              .filter((q) => q.type === "group")
+              .map((group) => (
+                <button
+                  key={group.id}
+                  className={cn(
+                    "w-full text-left px-2 py-1 rounded text-sm hover:bg-gray-100",
+                    activeGroupId === group.id && "bg-gray-100 text-green-600",
+                  )}
+                  onClick={() =>
+                    scrollToQuestion(form.questionnaire.id, group.id)
+                  }
+                  disabled={isPending}
+                >
+                  {group.text}
+                </button>
+              ))}
+          </div>
+        </div>
+      ))}
+    </>
+  );
+
   return (
     <div className="flex gap-4">
-      {/* Left Navigation */}
-      <div className="w-64 border-r border-gray-200 p-4 space-y-4 overflow-y-auto sticky top-6 h-screen lg:block hidden">
-        <BackButton className="w-full">
-          <ArrowLeft />
-          <span>{t("back_to_encounter")}</span>
-        </BackButton>
-        {questionnaireForms.map((form) => (
-          <div key={form.questionnaire.id} className="space-y-2">
-            <button
-              className={cn(
-                "w-full text-left px-2 py-1 rounded hover:bg-gray-100 font-medium",
-                activeQuestionnaireId === form.questionnaire.id &&
-                  "bg-gray-100 text-green-600",
-              )}
-              onClick={() => scrollToQuestion(form.questionnaire.id)}
-              disabled={isPending}
-            >
-              {form.questionnaire.title}
-            </button>
-            <div className="pl-4 space-y-1">
-              {form.questionnaire.questions
-                .filter((q) => q.type === "group")
-                .map((group) => (
-                  <button
-                    key={group.id}
-                    className={cn(
-                      "w-full text-left px-2 py-1 rounded text-sm hover:bg-gray-100",
-                      activeGroupId === group.id &&
-                        "bg-gray-100 text-green-600",
-                    )}
-                    onClick={() =>
-                      scrollToQuestion(form.questionnaire.id, group.id)
-                    }
-                    disabled={isPending}
-                  >
-                    {group.text}
-                  </button>
-                ))}
-            </div>
+      {/* Leftmost: BackButton + Ambient Scribe panel */}
+      {showScribePanel && (
+        <aside className="hidden xl:flex flex-col gap-3 w-[360px] shrink-0 sticky top-6 h-[calc(100vh-5rem)] pl-2">
+          <BackButton className="w-full shrink-0">
+            <ArrowLeft />
+            <span>{t("back_to_encounter")}</span>
+          </BackButton>
+          <div className="flex-1 min-h-0">
+            <AmbientScribePanel
+              questions={allQuestions}
+              onExtraction={handleScribeExtraction}
+            />
           </div>
-        ))}
-      </div>
+        </aside>
+      )}
+      {/* Left Navigation (only when scribe panel is hidden) */}
+      {!showScribePanel && (
+        <div className="w-64 border-r border-gray-200 p-4 space-y-4 overflow-y-auto sticky top-6 h-screen lg:block hidden">
+          <BackButton className="w-full">
+            <ArrowLeft />
+            <span>{t("back_to_encounter")}</span>
+          </BackButton>
+          {sectionNav}
+        </div>
+      )}
       {/* Main Content */}
       <div className="flex-1 overflow-y-auto w-full pb-8 space-y-2">
         {/* Questionnaire Forms */}
@@ -1055,6 +1092,7 @@ export function QuestionnaireForm({
                 questionId: string,
                 note?: string,
               ) => {
+                touchedQuestionsRef.current.add(questionId);
                 setQuestionnaireForms((existingForms) =>
                   existingForms.map((formItem) =>
                     formItem.questionnaire.id === form.questionnaire.id
@@ -1193,6 +1231,13 @@ export function QuestionnaireForm({
           className="p-4 space-y-6 max-w-4xl m-2"
         />
       </div>
+
+      {/* Rightmost: Section Navigation (only when scribe panel is shown) */}
+      {showScribePanel && (
+        <aside className="hidden xl:block w-64 shrink-0 border-l border-gray-200 p-4 space-y-4 overflow-y-auto sticky top-6 h-[calc(100vh-5rem)]">
+          {sectionNav}
+        </aside>
+      )}
     </div>
   );
 }

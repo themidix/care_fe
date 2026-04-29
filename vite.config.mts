@@ -163,6 +163,24 @@ export default defineConfig(async ({ mode }): Promise<UserConfig> => {
       port: 4000,
       host: "0.0.0.0",
       allowedHosts: true,
+      // Dev-only proxies for AssemblyAI. Their public REST endpoints do not
+      // send CORS headers, so direct browser fetches fail. WebSocket
+      // connections are not subject to CORS and continue to go direct.
+      // PRODUCTION: replace with a backend proxy that holds the API key.
+      proxy: {
+        "/_assemblyai/api": {
+          target: "https://api.assemblyai.com",
+          changeOrigin: true,
+          secure: true,
+          rewrite: (p) => p.replace(/^\/_assemblyai\/api/, ""),
+        },
+        "/_assemblyai/streaming": {
+          target: "https://streaming.assemblyai.com",
+          changeOrigin: true,
+          secure: true,
+          rewrite: (p) => p.replace(/^\/_assemblyai\/streaming/, ""),
+        },
+      },
       watch: {
         // Ignore test files from file watching to avoid unnecessary HMR triggers
         ignored: [

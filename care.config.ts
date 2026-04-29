@@ -360,6 +360,30 @@ const careConfig = {
   maxFormDialogFavorites: env.REACT_MAX_FORM_DIALOG_FAVORITES
     ? parseInt(env.REACT_MAX_FORM_DIALOG_FAVORITES, 10)
     : 5,
+
+  /**
+   * Ambient Scribe (experimental POC).
+   *
+   * SECURITY WARNING: This key is shipped to the browser bundle. The POC
+   * calls AssemblyAI directly from the client. Do NOT enable this in
+   * production without proxying calls through the backend so the key is
+   * never exposed.
+   */
+  ambientScribe: {
+    assemblyAIApiKey: env.REACT_AI_VOICE_ASSEMBLYAI_API_KEY as
+      | string
+      | undefined,
+    /**
+     * Hard cap on a single recording session in milliseconds (default 15 min).
+     */
+    maxRecordingMs: env.REACT_AI_VOICE_MAX_RECORDING_MS
+      ? parseInt(env.REACT_AI_VOICE_MAX_RECORDING_MS, 10)
+      : 15 * 60 * 1000,
+    /**
+     * Cadence (ms) for live form-fill LLM calls during recording.
+     */
+    liveFillIntervalMs: 10 * 1000,
+  },
 } as const;
 
 export default careConfig;

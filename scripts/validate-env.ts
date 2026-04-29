@@ -169,6 +169,8 @@ const envSchema = z
       })
       .optional(),
     REACT_MAX_FORM_DIALOG_FAVORITES: numberAsString.optional(),
+    REACT_AI_VOICE_ASSEMBLYAI_API_KEY: z.string().optional(),
+    REACT_AI_VOICE_MAX_RECORDING_MS: numberAsString.optional(),
   })
   .superRefine(async (data, ctx) => {
     // Ensure at least one API URL configuration is provided
