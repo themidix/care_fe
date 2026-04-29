@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useMediaDevicePermission } from "@/Utils/useMediaDevicePermission";
 
-const TARGET_SAMPLE_RATE = 16000;
+const DEFAULT_SAMPLE_RATE = 16000;
 
 interface UsePcmRecorderOptions {
   /** Called with each ~50ms PCM 16-bit mono chunk while recording. */
@@ -14,6 +14,12 @@ interface UsePcmRecorderOptions {
   maxDurationMs?: number;
   /** Invoked when the recorder auto-stops because of `maxDurationMs`. */
   onMaxDuration?: () => void;
+  /**
+   * Target sample rate (Hz) for the streamed Int16 PCM chunks and the WAV
+   * blob returned by `stop()`. Defaults to 16000 (AssemblyAI). Use 24000
+   * for OpenAI Realtime.
+   */
+  sampleRate?: number;
 }
 
 interface UsePcmRecorderReturn {
@@ -38,6 +44,7 @@ export function usePcmRecorder(
   options: UsePcmRecorderOptions = {},
 ): UsePcmRecorderReturn {
   const { onChunk, maxDurationMs, onMaxDuration } = options;
+  const targetSampleRate = options.sampleRate ?? DEFAULT_SAMPLE_RATE;
 
   const { requestPermission } = useMediaDevicePermission();
 
@@ -100,25 +107,25 @@ export function usePcmRecorder(
     const AudioCtx = (window.AudioContext ||
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (window as any).webkitAudioContext) as typeof AudioContext;
-    const audioCtx = new AudioCtx({ sampleRate: TARGET_SAMPLE_RATE });
+    const audioCtx = new AudioCtx({ sampleRate: targetSampleRate });
     audioCtxRef.current = audioCtx;
 
     const source = audioCtx.createMediaStreamSource(mediaStream);
     sourceRef.current = source;
 
-    // bufferSize 4096 @ 16kHz ~= 256ms per buffer. Browsers may cap to 16kHz
-    // but if sampleRate negotiation falls back, we resample below.
+    // bufferSize 4096 @ 16kHz ~= 256ms per buffer. Browsers may cap the
+    // negotiated sample rate, in which case we resample below.
     const bufferSize = 4096;
     const processor = audioCtx.createScriptProcessor(bufferSize, 1, 1);
     processorRef.current = processor;
 
     const ctxRate = audioCtx.sampleRate;
-    const needsResample = ctxRate !== TARGET_SAMPLE_RATE;
+    const needsResample = ctxRate !== targetSampleRate;
 
     processor.onaudioprocess = (event) => {
       const input = event.inputBuffer.getChannelData(0);
       const float = needsResample
-        ? downsample(input, ctxRate, TARGET_SAMPLE_RATE)
+        ? downsample(input, ctxRate, targetSampleRate)
         : input;
       const int16 = floatToInt16(float);
       chunksRef.current.push(int16);
@@ -163,7 +170,7 @@ export function usePcmRecorder(
     cleanup();
 
     if (collected.length === 0) return null;
-    return encodeWav(collected, TARGET_SAMPLE_RATE);
+    return encodeWav(collected, targetSampleRate);
   }, [cleanup, isRecording]);
 
   return { isRecording, level, elapsedMs, start, stop, error };

@@ -8,6 +8,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { AppUpdateNotifier } from "@/components/Common/AppUpdateNotifier";
 import Loading from "@/components/Common/Loading";
 import ProductionWarningBanner from "@/components/Common/ProductionWarningBanner";
+import { ScribeDebugPanelDev } from "@/components/Questionnaire/AmbientScribe/ScribeDebugPanel";
 
 import Integrations from "@/Integrations";
 import PluginEngine from "@/PluginEngine";
@@ -67,6 +68,7 @@ const App = () => {
         <ReactQueryDevtools initialIsOpen={false} />
       </QueryClientProvider>
       <Integrations.Sentry disabled={!import.meta.env.PROD} />
+      <ScribeDebugPanelDev />
     </>
   );
 };

@@ -207,8 +207,13 @@ export async function lemurExtract(
 Rules:
 - Only return values that are explicitly stated or unambiguously implied.
 - Omit a key entirely if the conversation does not provide a confident answer.
+- ALWAYS produce values in English, even when the transcript is in another
+  language. Translate free-text answers into clear, clinical English.
+  Drug names, dosages, and medical terms should use their standard English
+  spellings (e.g. "paracetamol", "amoxicillin").
+- For "choice" / enum-style questions, return the English option label.
 - Use the question's "type" to format the value:
-  - "string", "text", "url": a string
+  - "string", "text", "url": a string (in English)
   - "integer": an integer
   - "decimal": a number (may have decimals)
   - "boolean": true or false

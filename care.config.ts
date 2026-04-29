@@ -364,13 +364,38 @@ const careConfig = {
   /**
    * Ambient Scribe (experimental POC).
    *
-   * SECURITY WARNING: This key is shipped to the browser bundle. The POC
-   * calls AssemblyAI directly from the client. Do NOT enable this in
-   * production without proxying calls through the backend so the key is
-   * never exposed.
+   * SECURITY WARNING: API keys here are shipped to the browser bundle. The
+   * POC calls AssemblyAI / OpenAI directly from the client. Do NOT enable
+   * this in production without proxying calls through the backend so the
+   * keys are never exposed.
    */
   ambientScribe: {
+    /**
+     * Active ASR/LLM provider.
+     * - "openai" (default): gpt-4o-transcribe streaming + gpt-4o-transcribe-diarize batch
+     *   + gpt-4o-mini extraction. Supports Malayalam and other Indic languages.
+     * - "assemblyai": Universal-3 Pro Streaming (Medical Mode) + LeMUR. English only.
+     */
+    provider:
+      (env.REACT_AI_VOICE_PROVIDER as "openai" | "assemblyai" | undefined) ??
+      "openai",
     assemblyAIApiKey: env.REACT_AI_VOICE_ASSEMBLYAI_API_KEY as
+      | string
+      | undefined,
+    openAIApiKey: env.REACT_AI_VOICE_OPENAI_API_KEY as string | undefined,
+    /**
+     * Optional BCP-47 language code to lock the OpenAI Realtime / batch
+     * decoder to (e.g. "ml", "hi", "ta", "en"). Leave unset to let the
+     * model auto-detect — recommended for code-mixed clinical conversations
+     * where the language can shift mid-sentence. AssemblyAI ignores this.
+     */
+    language: env.REACT_AI_VOICE_LANGUAGE as string | undefined,
+    /**
+     * Optional comma- or space-separated medical formulary / vocabulary hint.
+     * Injected into the OpenAI Realtime session `prompt` and the LLM
+     * extraction prompt to bias drug names and clinical terms.
+     */
+    medicalKeywordsPrompt: env.REACT_AI_VOICE_MEDICAL_KEYWORDS as
       | string
       | undefined,
     /**
@@ -380,9 +405,17 @@ const careConfig = {
       ? parseInt(env.REACT_AI_VOICE_MAX_RECORDING_MS, 10)
       : 15 * 60 * 1000,
     /**
-     * Cadence (ms) for live form-fill LLM calls during recording.
+     * Cadence (ms) for live form-fill LLM calls during recording. Tighter
+     * cadence = fresher form values; protected from bursts by an in-flight
+     * guard and a length-delta gate inside `useAmbientScribe`.
      */
-    liveFillIntervalMs: 10 * 1000,
+    liveFillIntervalMs: 3 * 1000,
+    /**
+     * Minimum number of new transcript characters required before the live
+     * extraction loop runs again. Keeps token costs bounded during silence.
+     * Lower = more responsive, higher = cheaper.
+     */
+    liveFillMinDeltaChars: 8,
   },
 } as const;
 

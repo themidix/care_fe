@@ -6582,5 +6582,9 @@
   "your_request_order_list": "Your Request Order List",
   "zoom_in": "Zoom In",
   "zoom_out": "Zoom Out",
+  "ambient_scribe_filled_badge": "Filled by AI",
+  "ambient_scribe_filled_tooltip": "This field was filled by the Ambient Scribe.",
+  "ambient_scribe_edited_badge": "Edited",
+  "ambient_scribe_edited_tooltip": "AI-filled, then manually edited.",
   "℞": "℞"
 }

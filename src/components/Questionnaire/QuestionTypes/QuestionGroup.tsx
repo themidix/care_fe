@@ -2,6 +2,7 @@ import { memo, useEffect } from "react";
 
 import { cn } from "@/lib/utils";
 
+import { useScribeHighlight } from "@/components/Questionnaire/AmbientScribe/ScribeHighlightContext";
 import { QuestionLabel } from "@/components/Questionnaire/QuestionLabel";
 
 import { QuestionValidationError } from "@/types/questionnaire/batch";
@@ -142,20 +143,22 @@ export const QuestionGroup = memo(function QuestionGroup({
 
   if (question.type !== "group") {
     return (
-      <QuestionInput
-        question={question}
-        questionnaireResponses={questionnaireResponses}
-        encounterId={encounterId}
-        updateQuestionnaireResponseCB={updateQuestionnaireResponseCB}
-        errors={errors}
-        clearError={() => clearError(question.id)}
-        disabled={disabled}
-        facilityId={facilityId}
-        patientId={patientId}
-        isSubQuestion={isSubQuestion}
-        questionnaireId={questionnaireId}
-        questionnaireSlug={questionnaireSlug}
-      />
+      <ScribeHighlightWrap questionId={question.id}>
+        <QuestionInput
+          question={question}
+          questionnaireResponses={questionnaireResponses}
+          encounterId={encounterId}
+          updateQuestionnaireResponseCB={updateQuestionnaireResponseCB}
+          errors={errors}
+          clearError={() => clearError(question.id)}
+          disabled={disabled}
+          facilityId={facilityId}
+          patientId={patientId}
+          isSubQuestion={isSubQuestion}
+          questionnaireId={questionnaireId}
+          questionnaireSlug={questionnaireSlug}
+        />
+      </ScribeHighlightWrap>
     );
   }
 
@@ -210,3 +213,29 @@ export const QuestionGroup = memo(function QuestionGroup({
     </div>
   );
 });
+
+/**
+ * Wraps a non-group question with a transient ring when the Ambient Scribe
+ * has just written its value, providing visual feedback that the AI updated
+ * this field.
+ */
+function ScribeHighlightWrap({
+  questionId,
+  children,
+}: {
+  questionId: string;
+  children: React.ReactNode;
+}) {
+  const highlighted = useScribeHighlight(questionId);
+  return (
+    <div
+      className={cn(
+        "rounded-lg transition-shadow duration-700",
+        highlighted &&
+          "ring-2 ring-amber-400 ring-offset-2 shadow-[0_0_0_4px_rgba(251,191,36,0.15)]",
+      )}
+    >
+      {children}
+    </div>
+  );
+}

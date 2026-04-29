@@ -45,6 +45,7 @@ import { CreateAppointmentQuestion } from "@/types/scheduling/schedule";
 
 import BackButton from "@/components/Common/BackButton";
 import { AmbientScribePanel } from "@/components/Questionnaire/AmbientScribe/AmbientScribePanel";
+import { ScribeHighlightProvider } from "@/components/Questionnaire/AmbientScribe/ScribeHighlightContext";
 import { coerceValueByType } from "@/components/Questionnaire/AmbientScribe/extraction";
 import { validateEncounterQuestion } from "@/components/Questionnaire/QuestionTypes/EncounterQuestion";
 import { EncounterEdit } from "@/types/emr/encounter/encounter";
@@ -359,11 +360,31 @@ export function QuestionnaireForm({
   // Ambient Scribe never overwrites a value the user has already touched.
   const touchedQuestionsRef = useRef<Set<string>>(new Set());
 
+  // Tracks question ids most recently written by the scribe so the UI can
+  // briefly highlight them. The Map identity is replaced on each extraction
+  // so the highlight context re-renders.
+  const [scribeHighlights, setScribeHighlights] = useState<Map<string, number>>(
+    () => new Map(),
+  );
+
+  // Sticky set: question ids the AI scribe has ever filled this session.
+  // Used to render a "Filled by AI" badge on those questions.
+  const [filledByScribe, setFilledByScribe] = useState<Set<string>>(
+    () => new Set(),
+  );
+
+  // Sticky set: scribe-filled question ids the user has since manually
+  // edited. Used to render an "Edited (AI assisted)" badge.
+  const [editedAfterScribe, setEditedAfterScribe] = useState<Set<string>>(
+    () => new Set(),
+  );
+
   // Apply LeMUR extractions: skip questions the user has already touched, and
   // skip values that fail coercion. Updates affect every form's responses.
   const handleScribeExtraction = useCallback(
     ({ values }: { values: Record<string, unknown> }) => {
       const touched = touchedQuestionsRef.current;
+      const changedIds: string[] = [];
       setQuestionnaireForms((prevForms) =>
         prevForms.map((formItem) => {
           const updatedResponses = formItem.responses.map((response) => {
@@ -379,11 +400,31 @@ export function QuestionnaireForm({
               q.type,
             );
             if (!coerced) return response;
+            // Detect actual change so we only highlight fields whose values
+            // really moved.
+            const prev = JSON.stringify(response.values);
+            const next = JSON.stringify(coerced);
+            if (prev !== next) {
+              changedIds.push(response.question_id);
+            }
             return { ...response, values: coerced };
           });
           return { ...formItem, responses: updatedResponses };
         }),
       );
+      if (changedIds.length > 0) {
+        const now = Date.now();
+        setScribeHighlights((prev) => {
+          const next = new Map(prev);
+          changedIds.forEach((id) => next.set(id, now));
+          return next;
+        });
+        setFilledByScribe((prev) => {
+          const next = new Set(prev);
+          changedIds.forEach((id) => next.add(id));
+          return next;
+        });
+      }
     },
     [],
   );
@@ -967,8 +1008,11 @@ export function QuestionnaireForm({
   };
 
   const isFromDraft = !!continueDraftId;
+  const hasScribeApiKey =
+    !!careConfig.ambientScribe.assemblyAIApiKey ||
+    !!careConfig.ambientScribe.openAIApiKey;
   const showScribePanel =
-    !!careConfig.ambientScribe.assemblyAIApiKey &&
+    hasScribeApiKey &&
     !!encounterId &&
     encounterId !== "preview" &&
     !isFromDraft &&
@@ -1042,97 +1086,115 @@ export function QuestionnaireForm({
       )}
       {/* Main Content */}
       <div className="flex-1 overflow-y-auto w-full pb-8 space-y-2">
-        {/* Questionnaire Forms */}
-        {questionnaireForms.map((form, index) => (
-          <div
-            key={`${form.questionnaire.id}-${index}`}
-            className="rounded-lg py-6 space-y-6"
-            data-questionnaire-id={form.questionnaire.id}
-          >
-            <div className="flex justify-between items-center max-w-4xl p-2">
-              <div className="space-y-1">
-                <h2 className="text-xl font-semibold">
-                  {form.questionnaire.title}
-                </h2>
-                {form.questionnaire.description && (
-                  <p className="text-sm text-gray-500">
-                    {form.questionnaire.description}
-                  </p>
+        <ScribeHighlightProvider
+          updates={scribeHighlights}
+          filledByScribe={filledByScribe}
+          editedAfterScribe={editedAfterScribe}
+        >
+          {/* Questionnaire Forms */}
+          {questionnaireForms.map((form, index) => (
+            <div
+              key={`${form.questionnaire.id}-${index}`}
+              className="rounded-lg py-6 space-y-6"
+              data-questionnaire-id={form.questionnaire.id}
+            >
+              <div className="flex justify-between items-center max-w-4xl p-2">
+                <div className="space-y-1">
+                  <h2 className="text-xl font-semibold">
+                    {form.questionnaire.title}
+                  </h2>
+                  {form.questionnaire.description && (
+                    <p className="text-sm text-gray-500">
+                      {form.questionnaire.description}
+                    </p>
+                  )}
+                </div>
+                {form.questionnaire.slug !== questionnaireSlug && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setQuestionnaireForms((prev) =>
+                        prev.filter(
+                          (f) => f.questionnaire.id !== form.questionnaire.id,
+                        ),
+                      );
+                    }}
+                    disabled={isPending}
+                  >
+                    <CareIcon icon="l-times-circle" />
+                    <span>Remove</span>
+                  </Button>
                 )}
               </div>
-              {form.questionnaire.slug !== questionnaireSlug && (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    setQuestionnaireForms((prev) =>
-                      prev.filter(
-                        (f) => f.questionnaire.id !== form.questionnaire.id,
-                      ),
-                    );
-                  }}
-                  disabled={isPending}
-                >
-                  <CareIcon icon="l-times-circle" />
-                  <span>Remove</span>
-                </Button>
-              )}
-            </div>
 
-            <QuestionRenderer
-              facilityId={facilityId}
-              encounterId={encounterId}
-              questions={form.questionnaire.questions}
-              responses={form.responses}
-              questionnaireId={form.questionnaire.id}
-              questionnaireSlug={form.questionnaire.slug}
-              onResponseChange={(
-                values: ResponseValue[],
-                questionId: string,
-                note?: string,
-              ) => {
-                touchedQuestionsRef.current.add(questionId);
-                setQuestionnaireForms((existingForms) =>
-                  existingForms.map((formItem) =>
-                    formItem.questionnaire.id === form.questionnaire.id
-                      ? {
-                          ...formItem,
-                          responses: formItem.responses.map((r) =>
-                            r.question_id === questionId
-                              ? { ...r, values, note: note }
-                              : r,
-                          ),
-                          errors: [],
-                        }
-                      : formItem,
-                  ),
-                );
-                if (!isDirty) {
-                  setIsDirty(true);
-                }
-              }}
-              disabled={isPending}
-              activeGroupId={activeGroupId}
-              errors={form.errors}
-              patientId={patientId}
-              clearError={(questionId: string) => {
-                setQuestionnaireForms((prev) =>
-                  prev.map((f) =>
-                    f.questionnaire.id === form.questionnaire.id
-                      ? {
-                          ...f,
-                          errors: f.errors.filter(
-                            (e) => e.question_id !== questionId,
-                          ),
-                        }
-                      : f,
-                  ),
-                );
-              }}
-            />
-          </div>
-        ))}
+              <QuestionRenderer
+                facilityId={facilityId}
+                encounterId={encounterId}
+                questions={form.questionnaire.questions}
+                responses={form.responses}
+                questionnaireId={form.questionnaire.id}
+                questionnaireSlug={form.questionnaire.slug}
+                onResponseChange={(
+                  values: ResponseValue[],
+                  questionId: string,
+                  note?: string,
+                ) => {
+                  touchedQuestionsRef.current.add(questionId);
+                  // If the user is editing a field the AI scribe filled,
+                  // remember that so we can show an "Edited" badge.
+                  setFilledByScribe((prev) => {
+                    if (!prev.has(questionId)) return prev;
+                    setEditedAfterScribe((edited) => {
+                      if (edited.has(questionId)) return edited;
+                      const next = new Set(edited);
+                      next.add(questionId);
+                      return next;
+                    });
+                    return prev;
+                  });
+                  setQuestionnaireForms((existingForms) =>
+                    existingForms.map((formItem) =>
+                      formItem.questionnaire.id === form.questionnaire.id
+                        ? {
+                            ...formItem,
+                            responses: formItem.responses.map((r) =>
+                              r.question_id === questionId
+                                ? { ...r, values, note: note }
+                                : r,
+                            ),
+                            errors: [],
+                          }
+                        : formItem,
+                    ),
+                  );
+                  if (!isDirty) {
+                    setIsDirty(true);
+                  }
+                }}
+                disabled={isPending}
+                activeGroupId={activeGroupId}
+                errors={form.errors}
+                patientId={patientId}
+                clearError={(questionId: string) => {
+                  setQuestionnaireForms((prev) =>
+                    prev.map((f) =>
+                      f.questionnaire.id === form.questionnaire.id
+                        ? {
+                            ...f,
+                            errors: f.errors.filter(
+                              (e) => e.question_id !== questionId,
+                            ),
+                          }
+                        : f,
+                    ),
+                  );
+                }}
+              />
+            </div>
+          ))}
+        </ScribeHighlightProvider>
 
         {/* Search and Add Questionnaire */}
 
